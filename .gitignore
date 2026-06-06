@@ -1,0 +1,16 @@
+# Сессия Telethon — не публиковать
+data/
+*.session
+*.session-journal
+
+# Секреты
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Logs
+*.log
