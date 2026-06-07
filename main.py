@@ -4,7 +4,7 @@ import logging
 import os
 import subprocess
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 import psutil
@@ -31,6 +31,7 @@ from dotenv import load_dotenv
 import ui
 from db import DB, _parse_hm
 from runtime import SingleInstance, backup_database
+from tzutil import fmt_error_line, fmt_window, next_midnight_run, now, now_iso_minutes, today_iso
 
 load_dotenv()
 
@@ -49,7 +50,7 @@ if not BOT_TOKEN or "your_bot_token" in BOT_TOKEN:
 
 WINDOW_START = os.getenv("POST_WINDOW_START", "08:00")
 WINDOW_END = os.getenv("POST_WINDOW_END", "22:00")
-WINDOW = f"{WINDOW_START}–{WINDOW_END}"
+WINDOW = fmt_window(WINDOW_START, WINDOW_END)
 try:
     CHANNEL_DELAY = float(os.getenv("CHANNEL_DELAY_SEC", "4"))
     if CHANNEL_DELAY < 0:
@@ -67,7 +68,7 @@ db = DB(DB_PATH, WINDOW_START, WINDOW_END)
 _post_lock = asyncio.Lock()
 _wait: dict[int, str] = {}
 _extra_admins: set[int] = set()
-_started_at = datetime.now()
+_started_at = now()
 POST_ATTEMPTS = 3
 POST_BACKOFF = (2, 5, 10)
 ALERT_COOLDOWN_SEC = 300
@@ -89,7 +90,7 @@ def is_owner(user_id: int | None) -> bool:
 
 
 def format_uptime() -> str:
-    sec = int((datetime.now() - _started_at).total_seconds())
+    sec = int((now() - _started_at).total_seconds())
     h, rem = divmod(sec, 3600)
     m, s = divmod(rem, 60)
     if h:
@@ -356,7 +357,7 @@ async def show_channel_detail(q: CallbackQuery, chat_id: int) -> None:
         return
     title, username, minute, sched_date, last_post, active, partial_date = ch
     name = channel_label(title, username)
-    today = datetime.now().date().isoformat()
+    today = today_iso()
     partial = partial_date == today and last_post != today
     await edit_screen(
         q,
@@ -376,17 +377,17 @@ async def show_logs(q: CallbackQuery) -> None:
     last = await db.get_last_error()
     errors = await db.recent_errors(10)
     if last:
-        last = html.escape(last)
+        last = html.escape(fmt_error_line(last))
     errors = [(t, html.escape(n), html.escape(d or "")) for t, n, d in errors]
     await edit_screen(q, ui.logs_page(last, errors), ui.inline_logs())
 
 
 async def alert_admins(bot: Bot, detail: str) -> None:
     global _alert_at
-    now = datetime.now()
-    if _alert_at and (now - _alert_at).total_seconds() < ALERT_COOLDOWN_SEC:
+    now_dt = now()
+    if _alert_at and (now_dt - _alert_at).total_seconds() < ALERT_COOLDOWN_SEC:
         return
-    _alert_at = now
+    _alert_at = now_dt
     body = html.escape(detail[:500])
     for aid in await all_admin_ids():
         try:
@@ -1406,15 +1407,12 @@ async def poster_loop(bot: Bot) -> None:
 
 async def midnight_loop(bot: Bot) -> None:
     while True:
-        now = datetime.now()
-        nxt = (now + timedelta(days=1)).replace(hour=0, minute=5, second=0, microsecond=0)
-        await asyncio.sleep((nxt - now).total_seconds())
+        nxt = next_midnight_run()
+        await asyncio.sleep((nxt - now()).total_seconds())
         try:
             backup_name = await asyncio.to_thread(backup_database, DB_PATH)
             if backup_name:
-                await db.set_setting(
-                    "last_backup", datetime.now().strftime("%Y-%m-%d %H:%M")
-                )
+                await db.set_setting("last_backup", now_iso_minutes())
                 log.info("backup %s", backup_name)
             count = await db.regenerate_day()
             log.info("schedules reset: %s", count)
@@ -1434,13 +1432,13 @@ async def midnight_loop(bot: Bot) -> None:
 
 async def maybe_backup() -> None:
     try:
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = today_iso()
         last = await db.get_setting("last_backup")
         if last and last.startswith(today):
             return
         backup_name = await asyncio.to_thread(backup_database, DB_PATH)
         if backup_name:
-            await db.set_setting("last_backup", datetime.now().strftime("%Y-%m-%d %H:%M"))
+            await db.set_setting("last_backup", now_iso_minutes())
             log.info("backup %s", backup_name)
     except Exception:
         log.exception("maybe_backup")

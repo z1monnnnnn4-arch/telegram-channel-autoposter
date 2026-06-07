@@ -6,6 +6,8 @@ from aiogram.types import (
     InlineKeyboardMarkup,
 )
 
+from tzutil import TZ_LABEL, fmt_clock, fmt_user_datetime
+
 BOT_COMMANDS = [
     BotCommand(command="start", description="Главное меню"),
 ]
@@ -52,7 +54,7 @@ CB_ADMIN_REMOVE_PREFIX = "admrm:"
 CB_ADMIN_REMOVE_YES_PREFIX = "admry:"
 CB_NOOP = "noop"
 
-BOT_VERSION = "2.0"
+BOT_VERSION = "2.0.1"
 CHANNELS_PER_PAGE = 12
 
 
@@ -334,7 +336,7 @@ def dashboard(
             else ""
         )
         + f"\n\n🕐 Окно: <b>{window}</b>  ·  📤 <b>фото → текст</b>\n\n"
-        f"<b>Ближайшие посты:</b>\n{sched}"
+        f"<b>Ближайшие посты ({TZ_LABEL}):</b>\n{sched}"
     )
 
 
@@ -355,7 +357,7 @@ def stats_page(stats: dict, next_lines: list[str], inactive: int, window: str) -
         + f"💤 Неактивных в базе: <b>{inactive}</b>\n\n"
         f"🕐 Окно публикаций: <b>{window}</b>\n"
         f"📤 Порядок: <b>фото → текст</b>\n\n"
-        f"<b>Ближайшие посты:</b>\n{sched}",
+        f"<b>Ближайшие посты ({TZ_LABEL}):</b>\n{sched}",
     )
 
 
@@ -426,7 +428,7 @@ def channel_detail(
         f"Статус: <b>{status}</b>\n"
         f"Сегодня: <b>{today}</b>\n"
         f"Время поста: <b>{sched_time}</b>\n"
-        f"Дата слота: <b>{sched_date}</b>",
+        f"Дата слота: <b>{sched_date}</b> ({TZ_LABEL})",
     )
 
 
@@ -440,7 +442,7 @@ def logs_page(last_error: str | None, errors: list[tuple]) -> str:
         lines = []
         for created_at, name, detail in errors:
             text = detail or name
-            lines.append(f"  • {created_at[11:16]} {name}\n    {text}")
+            lines.append(f"  • {fmt_clock(created_at)} {name}\n    {text}")
         history = "<b>Недавние:</b>\n" + "\n".join(lines)
     else:
         history = "Ошибок в истории пока нет."
@@ -464,8 +466,8 @@ def sys_page(
     last_backup: str | None,
     last_ok: str | None,
 ) -> str:
-    backup_s = last_backup or "ещё не было"
-    ok_s = last_ok or "—"
+    backup_s = fmt_user_datetime(last_backup) if last_backup else "ещё не было"
+    ok_s = fmt_user_datetime(last_ok)
     partial = stats.get("partial_today", 0)
     return page(
         "💻",

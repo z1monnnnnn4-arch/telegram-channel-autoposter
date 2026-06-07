@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import os
 import shutil
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
 import psutil
+
+from tzutil import now, today_iso
 
 
 class SingleInstance:
@@ -48,13 +50,13 @@ def backup_database(db_path: Path, keep_days: int = 14) -> str | None:
         return None
     backup_dir = db_path.parent / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
-    dest = backup_dir / f"bot-{date.today().isoformat()}.db"
+    dest = backup_dir / f"bot-{today_iso()}.db"
     shutil.copy2(db_path, dest)
-    cutoff = datetime.now() - timedelta(days=keep_days)
+    cutoff_day = (now() - timedelta(days=keep_days)).date()
     for old in backup_dir.glob("bot-*.db"):
         try:
             day = date.fromisoformat(old.stem.removeprefix("bot-"))
-            if datetime.combine(day, datetime.min.time()) < cutoff:
+            if day < cutoff_day:
                 old.unlink(missing_ok=True)
         except ValueError:
             pass

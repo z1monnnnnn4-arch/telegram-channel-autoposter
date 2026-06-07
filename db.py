@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import random
-from datetime import date, datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 import aiosqlite
+
+from tzutil import fmt_minute as _fmt_minute
+from tzutil import now, now_iso_seconds, today_iso
 
 
 def _parse_hm(value: str) -> int:
@@ -63,7 +66,7 @@ class DB:
             await db.commit()
 
     async def set_partial(self, chat_id: int) -> None:
-        today = date.today().isoformat()
+        today = today_iso()
         async with aiosqlite.connect(self.path) as db:
             await db.execute(
                 "UPDATE channels SET partial_post_date=? WHERE chat_id=?",
@@ -72,7 +75,7 @@ class DB:
             await db.commit()
 
     async def needs_text_only(self, chat_id: int) -> bool:
-        today = date.today().isoformat()
+        today = today_iso()
         async with aiosqlite.connect(self.path) as db:
             row = await db.execute_fetchall(
                 "SELECT partial_post_date FROM channels WHERE chat_id=?",
@@ -81,7 +84,7 @@ class DB:
         return bool(row and row[0][0] == today)
 
     async def count_partial_today(self) -> int:
-        today = date.today().isoformat()
+        today = today_iso()
         async with aiosqlite.connect(self.path) as db:
             row = await db.execute_fetchall(
                 """
@@ -109,13 +112,13 @@ class DB:
         return row[0][0] if row else None
 
     def _new_schedule(self) -> tuple[str, int]:
-        day = date.today()
+        day = now().date()
         start, end = self.win_start, self.win_end
-        now = datetime.now()
-        if now.hour * 60 + now.minute >= end:
+        now_dt = now()
+        if now_dt.hour * 60 + now_dt.minute >= end:
             day += timedelta(days=1)
-        elif now.hour * 60 + now.minute >= start:
-            start = now.hour * 60 + now.minute + 1
+        elif now_dt.hour * 60 + now_dt.minute >= start:
+            start = now_dt.hour * 60 + now_dt.minute + 1
         if start > end:
             day += timedelta(days=1)
             start = self.win_start
@@ -125,7 +128,7 @@ class DB:
         self, chat_id: int, title: str, username: str | None
     ) -> None:
         sched_date, minute = self._new_schedule()
-        today = date.today().isoformat()
+        today = today_iso()
         async with aiosqlite.connect(self.path) as db:
             row = await db.execute_fetchall(
                 "SELECT schedule_date, last_post_date FROM channels WHERE chat_id=?",
@@ -227,7 +230,6 @@ class DB:
     async def get_channel(
         self, chat_id: int
     ) -> tuple[str, str | None, int, str | None, str | None, int] | None:
-        today = date.today().isoformat()
         async with aiosqlite.connect(self.path) as db:
             row = await db.execute_fetchall(
                 """
@@ -263,7 +265,7 @@ class DB:
         detail: str = "",
         source: str = "auto",
     ) -> None:
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now = now_iso_seconds()
         async with aiosqlite.connect(self.path) as db:
             await db.execute(
                 """
@@ -288,7 +290,7 @@ class DB:
             await db.commit()
 
     async def set_last_error(self, text: str) -> None:
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now = now_iso_seconds()
         await self.set_setting("last_error", f"{now} · {text}"[:500])
 
     async def get_last_error(self) -> str | None:
@@ -330,7 +332,7 @@ class DB:
         return row[0][0]
 
     async def pending_channels(self) -> list[tuple[int, str, str | None]]:
-        today = date.today().isoformat()
+        today = today_iso()
         async with aiosqlite.connect(self.path) as db:
             rows = await db.execute_fetchall(
                 """
@@ -345,7 +347,7 @@ class DB:
         return [(r[0], r[1], r[2]) for r in rows]
 
     async def ensure_today_schedules(self) -> None:
-        today = date.today().isoformat()
+        today = today_iso()
         async with aiosqlite.connect(self.path) as db:
             rows = await db.execute_fetchall(
                 "SELECT chat_id FROM channels WHERE active=1 AND schedule_date!=?",
@@ -360,7 +362,7 @@ class DB:
             await db.commit()
 
     async def regenerate_day(self) -> int:
-        day_s = date.today().isoformat()
+        day_s = today_iso()
         count = 0
         async with aiosqlite.connect(self.path) as db:
             rows = await db.execute_fetchall(
@@ -381,8 +383,8 @@ class DB:
         return count
 
     async def due_channels(self) -> list[tuple[int, str, str | None]]:
-        today = date.today().isoformat()
-        now_min = datetime.now().hour * 60 + datetime.now().minute
+        today = today_iso()
+        now_min = now().hour * 60 + now().minute
         async with aiosqlite.connect(self.path) as db:
             rows = await db.execute_fetchall(
                 """
@@ -398,7 +400,7 @@ class DB:
         return [(r[0], r[1], r[2]) for r in rows]
 
     async def mark_posted(self, chat_id: int) -> None:
-        today = date.today().isoformat()
+        today = today_iso()
         async with aiosqlite.connect(self.path) as db:
             await db.execute(
                 """
@@ -409,11 +411,11 @@ class DB:
                 (today, chat_id),
             )
             await db.commit()
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now = now_iso_seconds()
         await self.set_setting("last_ok", now)
 
     async def stats(self) -> dict:
-        today = date.today().isoformat()
+        today = today_iso()
         async with aiosqlite.connect(self.path) as db:
             total = (await db.execute_fetchall(
                 "SELECT COUNT(*) FROM channels WHERE active=1"
@@ -442,7 +444,7 @@ class DB:
         }
 
     async def list_active_channels(self) -> list[tuple[int, str, str | None, str]]:
-        today = date.today().isoformat()
+        today = today_iso()
         async with aiosqlite.connect(self.path) as db:
             rows = await db.execute_fetchall(
                 """
@@ -463,7 +465,7 @@ class DB:
         return result
 
     async def next_posts(self, limit: int = 5) -> list[str]:
-        today = date.today().isoformat()
+        today = today_iso()
         async with aiosqlite.connect(self.path) as db:
             rows = await db.execute_fetchall(
                 """
@@ -475,14 +477,10 @@ class DB:
             )
         lines = []
         for title, username, minute in rows:
-            h, m = divmod(minute, 60)
             name = f"@{username}" if username else title
-            lines.append(f"{name} — {h:02d}:{m:02d}")
+            lines.append(f"{name} — {_fmt_minute(minute)}")
         return lines
 
     @staticmethod
     def fmt_minute(minute: int | None) -> str:
-        if minute is None:
-            return "—"
-        h, m = divmod(minute, 60)
-        return f"{h:02d}:{m:02d}"
+        return _fmt_minute(minute)
