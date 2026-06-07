@@ -19,21 +19,43 @@ from aiogram.exceptions import (
     TelegramServerError,
 )
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, ChatMemberUpdated, InputMediaPhoto, Message
+from aiogram.types import (
+    CallbackQuery,
+    ChatMemberUpdated,
+    ErrorEvent,
+    InputMediaPhoto,
+    Message,
+)
 from dotenv import load_dotenv
 
 import ui
-from db import DB
+from db import DB, _parse_hm
 from runtime import SingleInstance, backup_database
 
 load_dotenv()
 
-BOT_TOKEN = os.environ["BOT_TOKEN"]
-ADMIN_IDS = {int(x) for x in os.environ["ADMIN_IDS"].split(",") if x.strip()}
+try:
+    BOT_TOKEN = os.environ["BOT_TOKEN"]
+except KeyError:
+    raise SystemExit("BOT_TOKEN не задан — создайте .env из .env.example") from None
+
+_admin_raw = os.environ.get("ADMIN_IDS", "").strip()
+ADMIN_IDS = {int(x) for x in _admin_raw.split(",") if x.strip().isdigit()}
+if not ADMIN_IDS:
+    raise SystemExit("ADMIN_IDS не задан — укажите ваш Telegram id в .env")
+
+if not BOT_TOKEN or "your_bot_token" in BOT_TOKEN:
+    raise SystemExit("BOT_TOKEN в .env не заполнен")
+
 WINDOW_START = os.getenv("POST_WINDOW_START", "08:00")
 WINDOW_END = os.getenv("POST_WINDOW_END", "22:00")
 WINDOW = f"{WINDOW_START}–{WINDOW_END}"
-CHANNEL_DELAY = float(os.getenv("CHANNEL_DELAY_SEC", "4"))
+try:
+    CHANNEL_DELAY = float(os.getenv("CHANNEL_DELAY_SEC", "4"))
+    if CHANNEL_DELAY < 0:
+        raise ValueError
+except ValueError:
+    raise SystemExit("CHANNEL_DELAY_SEC должен быть числом >= 0") from None
 DB_PATH = Path(os.getenv("DB_PATH", "data/bot.db"))
 ROOT = Path(__file__).resolve().parent
 
@@ -82,14 +104,35 @@ async def all_admin_ids() -> list[int]:
 
 
 def get_system_load() -> dict[str, str]:
-    cpu = psutil.cpu_percent(interval=0.3)
-    mem = psutil.virtual_memory()
-    disk = psutil.disk_usage(str(ROOT))
-    return {
-        "cpu": f"{cpu:.0f}%",
-        "ram": f"{mem.percent:.0f}% ({mem.used // (1024 ** 2)} / {mem.total // (1024 ** 2)} MB)",
-        "disk": f"{disk.percent:.0f}% ({disk.free // (1024 ** 3)} GB свободно)",
-    }
+    try:
+        cpu = psutil.cpu_percent(interval=0.3)
+        mem = psutil.virtual_memory()
+        disk = psutil.disk_usage(str(ROOT))
+        return {
+            "cpu": f"{cpu:.0f}%",
+            "ram": f"{mem.percent:.0f}% ({mem.used // (1024 ** 2)} / {mem.total // (1024 ** 2)} MB)",
+            "disk": f"{disk.percent:.0f}% ({disk.free // (1024 ** 3)} GB свободно)",
+        }
+    except Exception as ex:
+        log.warning("system load: %s", ex)
+        return {"cpu": "—", "ram": "—", "disk": "—"}
+
+
+def parse_cb_int(data: str, prefix: str) -> int | None:
+    try:
+        return int(data.removeprefix(prefix))
+    except ValueError:
+        return None
+
+
+def _pip_cmd() -> list[str]:
+    if sys.platform == "win32":
+        venv_pip = ROOT / ".venv" / "Scripts" / "pip.exe"
+    else:
+        venv_pip = ROOT / ".venv" / "bin" / "pip"
+    if venv_pip.exists():
+        return [str(venv_pip), "install", "-r", "requirements.txt"]
+    return [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"]
 
 
 async def _run_in_root(args: list[str]) -> subprocess.CompletedProcess:
@@ -156,13 +199,8 @@ async def git_pull() -> tuple[bool, str]:
 
 
 async def pip_install_deps() -> tuple[bool, str]:
-    venv_pip = ROOT / ".venv" / "bin" / "pip"
-    if venv_pip.exists():
-        cmd = [str(venv_pip), "install", "-r", "requirements.txt"]
-    else:
-        cmd = [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"]
     try:
-        r = await _run_in_root(cmd)
+        r = await _run_in_root(_pip_cmd())
     except FileNotFoundError:
         return False, "pip не найден"
     except subprocess.TimeoutExpired:
@@ -242,15 +280,20 @@ async def edit_screen(
     *,
     parse_mode: ParseMode = ParseMode.HTML,
 ) -> None:
+    if not q.message:
+        return
     msg = q.message
     if msg.photo or msg.document or msg.video or msg.animation:
         try:
             await msg.delete()
         except TelegramBadRequest:
             pass
-        await q.bot.send_message(
-            msg.chat.id, text, reply_markup=reply_markup, parse_mode=parse_mode
-        )
+        try:
+            await q.bot.send_message(
+                msg.chat.id, text, reply_markup=reply_markup, parse_mode=parse_mode
+            )
+        except TelegramBadRequest as ex:
+            log.warning("send_message: %s", ex)
         return
     try:
         await msg.edit_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
@@ -259,11 +302,21 @@ async def edit_screen(
         if "message is not modified" in err:
             return
         if "no text" in err or "can't be edited" in err:
-            await q.bot.send_message(
-                msg.chat.id, text, reply_markup=reply_markup, parse_mode=parse_mode
-            )
+            try:
+                await q.bot.send_message(
+                    msg.chat.id, text, reply_markup=reply_markup, parse_mode=parse_mode
+                )
+            except TelegramBadRequest as ex2:
+                log.warning("send_message fallback: %s", ex2)
             return
-        raise
+        log.warning("edit_text: %s", ex)
+
+
+async def safe_answer(q: CallbackQuery, text: str = "", *, alert: bool = False) -> None:
+    try:
+        await q.answer(text, show_alert=alert)
+    except TelegramBadRequest:
+        pass
 
 
 async def deny(msg: Message) -> None:
@@ -289,23 +342,24 @@ async def build_stats() -> str:
 async def show_channels(q: CallbackQuery, page: int = 0) -> None:
     channels = await db.list_active_channels()
     total = len(channels)
-    await q.message.edit_text(
+    await edit_screen(
+        q,
         ui.channels_list(channels, page, total),
-        reply_markup=ui.inline_channels_picker(channels, page, total),
-        parse_mode=ParseMode.HTML,
+        ui.inline_channels_picker(channels, page, total),
     )
 
 
 async def show_channel_detail(q: CallbackQuery, chat_id: int) -> None:
     ch = await db.get_channel(chat_id)
     if not ch:
-        await q.answer("Канал не найден", show_alert=True)
+        await safe_answer(q, "Канал не найден", alert=True)
         return
     title, username, minute, sched_date, last_post, active, partial_date = ch
     name = channel_label(title, username)
     today = datetime.now().date().isoformat()
     partial = partial_date == today and last_post != today
-    await q.message.edit_text(
+    await edit_screen(
+        q,
         ui.channel_detail(
             name,
             db.fmt_minute(minute),
@@ -314,8 +368,7 @@ async def show_channel_detail(q: CallbackQuery, chat_id: int) -> None:
             bool(active),
             partial,
         ),
-        reply_markup=ui.inline_channel_detail(chat_id),
-        parse_mode=ParseMode.HTML,
+        ui.inline_channel_detail(chat_id),
     )
 
 
@@ -325,11 +378,7 @@ async def show_logs(q: CallbackQuery) -> None:
     if last:
         last = html.escape(last)
     errors = [(t, html.escape(n), html.escape(d or "")) for t, n, d in errors]
-    await q.message.edit_text(
-        ui.logs_page(last, errors),
-        reply_markup=ui.inline_logs(),
-        parse_mode=ParseMode.HTML,
-    )
+    await edit_screen(q, ui.logs_page(last, errors), ui.inline_logs())
 
 
 async def alert_admins(bot: Bot, detail: str) -> None:
@@ -413,6 +462,11 @@ async def post_list(
             await db.deactivate(chat_id)
             await db.log_post(chat_id, name, "off", "нет прав", source)
             log.warning("deactivated %s", name)
+        except TelegramBadRequest as ex:
+            fail += 1
+            msg = str(ex)
+            await db.log_post(chat_id, name, "fail", msg, source)
+            log.warning("bad request %s: %s", name, ex)
         except Exception as ex:
             fail += 1
             msg = str(ex)
@@ -495,10 +549,35 @@ async def process_manual_channel(msg: Message) -> None:
         )
     else:
         await msg.answer(
-            ui.page("❌", "Ошибка", "КАНАЛЫ", result),
+            ui.page("❌", "Ошибка", "КАНАЛЫ", html.escape(result)),
             reply_markup=ui.inline_back(ui.CB_ADD_CHANNEL),
             parse_mode=ParseMode.HTML,
         )
+
+
+@router.error()
+async def on_handler_error(event: ErrorEvent) -> bool:
+    log.exception("handler error")
+    update = event.update
+    body = ui.page(
+        "❌",
+        "Ошибка",
+        "СИСТЕМА",
+        "Что-то пошло не так.\nПопробуйте ещё раз или /start",
+    )
+    q = update.callback_query
+    if q and q.from_user and is_admin(q.from_user.id):
+        await safe_answer(q, "Ошибка", alert=True)
+        if q.message:
+            await edit_screen(q, body, ui.inline_open_menu())
+        return True
+    msg = update.message
+    if msg and msg.from_user and is_admin(msg.from_user.id):
+        try:
+            await msg.answer(body, reply_markup=ui.inline_open_menu(), parse_mode=ParseMode.HTML)
+        except TelegramBadRequest:
+            pass
+    return True
 
 
 @router.message(Command("start"))
@@ -688,15 +767,29 @@ async def cb_setphoto(q: CallbackQuery) -> None:
 @router.callback_query(F.data == ui.CB_SEND)
 async def cb_send(q: CallbackQuery) -> None:
     if not is_admin(q.from_user.id):
-        await q.answer("Нет доступа", show_alert=True)
+        await safe_answer(q, "Нет доступа", alert=True)
+        return
+    text = await db.get_setting("post_text")
+    photo = await db.get_setting("photo_file_id")
+    if not text or not photo:
+        await safe_answer(q)
+        await edit_screen(
+            q,
+            ui.page("❌", "Отправка", "РАССЫЛКА", "Сначала задайте 📝 текст и 🖼 фото."),
+            ui.inline_back(),
+        )
         return
     pending = await db.pending_channels()
-    await q.answer()
-    await q.message.edit_text(
-        ui.send_confirm(len(pending)),
-        reply_markup=ui.inline_confirm_send(),
-        parse_mode=ParseMode.HTML,
-    )
+    if not pending:
+        await safe_answer(q)
+        await edit_screen(
+            q,
+            ui.page("ℹ️", "Отправка", "РАССЫЛКА", "Все каналы уже получили пост сегодня."),
+            ui.inline_back(),
+        )
+        return
+    await safe_answer(q)
+    await edit_screen(q, ui.send_confirm(len(pending)), ui.inline_confirm_send())
 
 
 @router.callback_query(F.data == ui.CB_SEND_YES)
@@ -734,7 +827,10 @@ async def cb_channels_page(q: CallbackQuery) -> None:
     if not is_admin(q.from_user.id):
         await q.answer("Нет доступа", show_alert=True)
         return
-    page = int(q.data.removeprefix(ui.CB_CHANNELS_PAGE_PREFIX))
+    page = parse_cb_int(q.data, ui.CB_CHANNELS_PAGE_PREFIX)
+    if page is None:
+        await safe_answer(q, "Неверные данные", alert=True)
+        return
     await q.answer()
     await show_channels(q, page)
 
@@ -744,7 +840,10 @@ async def cb_channel_detail(q: CallbackQuery) -> None:
     if not is_admin(q.from_user.id):
         await q.answer("Нет доступа", show_alert=True)
         return
-    chat_id = int(q.data.removeprefix(ui.CB_CHANNEL_PREFIX))
+    chat_id = parse_cb_int(q.data, ui.CB_CHANNEL_PREFIX)
+    if chat_id is None:
+        await safe_answer(q, "Неверные данные", alert=True)
+        return
     await q.answer()
     await show_channel_detail(q, chat_id)
 
@@ -754,7 +853,10 @@ async def cb_send_one(q: CallbackQuery) -> None:
     if not is_admin(q.from_user.id):
         await q.answer("Нет доступа", show_alert=True)
         return
-    chat_id = int(q.data.removeprefix(ui.CB_SEND_ONE_PREFIX))
+    chat_id = parse_cb_int(q.data, ui.CB_SEND_ONE_PREFIX)
+    if chat_id is None:
+        await safe_answer(q, "Неверные данные", alert=True)
+        return
     ch = await db.get_channel(chat_id)
     if not ch:
         await q.answer("Канал не найден", show_alert=True)
@@ -773,7 +875,10 @@ async def cb_send_one_yes(q: CallbackQuery) -> None:
     if not is_admin(q.from_user.id):
         await q.answer("Нет доступа", show_alert=True)
         return
-    chat_id = int(q.data.removeprefix(ui.CB_SEND_ONE_YES_PREFIX))
+    chat_id = parse_cb_int(q.data, ui.CB_SEND_ONE_YES_PREFIX)
+    if chat_id is None:
+        await safe_answer(q, "Неверные данные", alert=True)
+        return
     await q.answer("Отправляю…")
     ok, err = await do_send_one(q.bot, chat_id)
     if err:
@@ -795,7 +900,10 @@ async def cb_schedule_one(q: CallbackQuery) -> None:
     if not is_admin(q.from_user.id):
         await q.answer("Нет доступа", show_alert=True)
         return
-    chat_id = int(q.data.removeprefix(ui.CB_SCHEDULE_ONE_PREFIX))
+    chat_id = parse_cb_int(q.data, ui.CB_SCHEDULE_ONE_PREFIX)
+    if chat_id is None:
+        await safe_answer(q, "Неверные данные", alert=True)
+        return
     ch = await db.get_channel(chat_id)
     if not ch:
         await q.answer("Канал не найден", show_alert=True)
@@ -815,7 +923,10 @@ async def cb_schedule_one_yes(q: CallbackQuery) -> None:
     if not is_admin(q.from_user.id):
         await q.answer("Нет доступа", show_alert=True)
         return
-    chat_id = int(q.data.removeprefix(ui.CB_SCHEDULE_ONE_YES_PREFIX))
+    chat_id = parse_cb_int(q.data, ui.CB_SCHEDULE_ONE_YES_PREFIX)
+    if chat_id is None:
+        await safe_answer(q, "Неверные данные", alert=True)
+        return
     if await db.regenerate_channel(chat_id):
         ch = await db.get_channel(chat_id)
         time_s = db.fmt_minute(ch[2]) if ch else "—"
@@ -831,7 +942,10 @@ async def cb_remove_channel(q: CallbackQuery) -> None:
     if not is_admin(q.from_user.id):
         await q.answer("Нет доступа", show_alert=True)
         return
-    chat_id = int(q.data.removeprefix(ui.CB_REMOVE_PREFIX))
+    chat_id = parse_cb_int(q.data, ui.CB_REMOVE_PREFIX)
+    if chat_id is None:
+        await safe_answer(q, "Неверные данные", alert=True)
+        return
     ch = await db.get_channel(chat_id)
     if not ch:
         await q.answer("Канал не найден", show_alert=True)
@@ -850,7 +964,10 @@ async def cb_remove_yes(q: CallbackQuery) -> None:
     if not is_admin(q.from_user.id):
         await q.answer("Нет доступа", show_alert=True)
         return
-    chat_id = int(q.data.removeprefix(ui.CB_REMOVE_YES_PREFIX))
+    chat_id = parse_cb_int(q.data, ui.CB_REMOVE_YES_PREFIX)
+    if chat_id is None:
+        await safe_answer(q, "Неверные данные", alert=True)
+        return
     await db.delete_channel(chat_id)
     await q.answer("Удалён")
     await show_channels(q, 0)
@@ -933,27 +1050,35 @@ async def cb_preview(q: CallbackQuery) -> None:
     s = await db.stats()
     photo = await db.get_setting("photo_file_id")
     body = ui.content_preview(text, s["has_photo"])
-    await q.answer()
-    if photo:
-        if q.message.photo:
-            await q.message.edit_media(
-                InputMediaPhoto(media=photo, caption=body, parse_mode=ParseMode.HTML),
-                reply_markup=ui.inline_back(),
-            )
+    await safe_answer(q)
+    try:
+        if photo:
+            if q.message.photo:
+                await q.message.edit_media(
+                    InputMediaPhoto(media=photo, caption=body, parse_mode=ParseMode.HTML),
+                    reply_markup=ui.inline_back(),
+                )
+            else:
+                try:
+                    await q.message.delete()
+                except TelegramBadRequest:
+                    pass
+                await q.bot.send_photo(
+                    q.message.chat.id,
+                    photo,
+                    caption=body,
+                    reply_markup=ui.inline_back(),
+                    parse_mode=ParseMode.HTML,
+                )
         else:
-            try:
-                await q.message.delete()
-            except TelegramBadRequest:
-                pass
-            await q.bot.send_photo(
-                q.message.chat.id,
-                photo,
-                caption=body,
-                reply_markup=ui.inline_back(),
-                parse_mode=ParseMode.HTML,
-            )
-    else:
-        await edit_screen(q, body, ui.inline_back())
+            await edit_screen(q, body, ui.inline_back())
+    except TelegramBadRequest as ex:
+        log.warning("preview: %s", ex)
+        await edit_screen(
+            q,
+            ui.page("❌", "Просмотр", "КОНТЕНТ", "Не удалось показать фото — загрузите заново."),
+            ui.inline_back(),
+        )
 
 
 @router.callback_query(F.data == ui.CB_REGEN)
@@ -1200,7 +1325,10 @@ async def cb_admin_remove(q: CallbackQuery) -> None:
     if not is_owner(q.from_user.id):
         await q.answer("Только владелец из .env", show_alert=True)
         return
-    uid = int(q.data.removeprefix(ui.CB_ADMIN_REMOVE_PREFIX))
+    uid = parse_cb_int(q.data, ui.CB_ADMIN_REMOVE_PREFIX)
+    if uid is None:
+        await safe_answer(q, "Неверные данные", alert=True)
+        return
     if uid in ADMIN_IDS:
         await q.answer("Нельзя убрать владельца", show_alert=True)
         return
@@ -1217,7 +1345,10 @@ async def cb_admin_remove_yes(q: CallbackQuery) -> None:
     if not is_owner(q.from_user.id):
         await q.answer("Только владелец из .env", show_alert=True)
         return
-    uid = int(q.data.removeprefix(ui.CB_ADMIN_REMOVE_YES_PREFIX))
+    uid = parse_cb_int(q.data, ui.CB_ADMIN_REMOVE_YES_PREFIX)
+    if uid is None:
+        await safe_answer(q, "Неверные данные", alert=True)
+        return
     if uid in ADMIN_IDS:
         await q.answer("Нельзя убрать владельца", show_alert=True)
         return
@@ -1278,39 +1409,51 @@ async def midnight_loop(bot: Bot) -> None:
         now = datetime.now()
         nxt = (now + timedelta(days=1)).replace(hour=0, minute=5, second=0, microsecond=0)
         await asyncio.sleep((nxt - now).total_seconds())
-        backup_name = await asyncio.to_thread(backup_database, DB_PATH)
-        if backup_name:
-            await db.set_setting(
-                "last_backup", datetime.now().strftime("%Y-%m-%d %H:%M")
-            )
-            log.info("backup %s", backup_name)
-        count = await db.regenerate_day()
-        log.info("schedules reset: %s", count)
-        for aid in await all_admin_ids():
-            try:
-                await bot.send_message(
-                    aid,
-                    ui.page("🌅", "Новый день", "РАССЫЛКА", f"Расписание обновлено для <b>{count}</b> каналов."),
-                    reply_markup=ui.inline_open_menu(),
-                    parse_mode=ParseMode.HTML,
+        try:
+            backup_name = await asyncio.to_thread(backup_database, DB_PATH)
+            if backup_name:
+                await db.set_setting(
+                    "last_backup", datetime.now().strftime("%Y-%m-%d %H:%M")
                 )
-            except Exception:
-                pass
+                log.info("backup %s", backup_name)
+            count = await db.regenerate_day()
+            log.info("schedules reset: %s", count)
+            for aid in await all_admin_ids():
+                try:
+                    await bot.send_message(
+                        aid,
+                        ui.page("🌅", "Новый день", "РАССЫЛКА", f"Расписание обновлено для <b>{count}</b> каналов."),
+                        reply_markup=ui.inline_open_menu(),
+                        parse_mode=ParseMode.HTML,
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            log.exception("midnight_loop")
 
 
 async def maybe_backup() -> None:
-    today = datetime.now().strftime("%Y-%m-%d")
-    last = await db.get_setting("last_backup")
-    if last and last.startswith(today):
-        return
-    backup_name = await asyncio.to_thread(backup_database, DB_PATH)
-    if backup_name:
-        await db.set_setting("last_backup", datetime.now().strftime("%Y-%m-%d %H:%M"))
-        log.info("backup %s", backup_name)
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        last = await db.get_setting("last_backup")
+        if last and last.startswith(today):
+            return
+        backup_name = await asyncio.to_thread(backup_database, DB_PATH)
+        if backup_name:
+            await db.set_setting("last_backup", datetime.now().strftime("%Y-%m-%d %H:%M"))
+            log.info("backup %s", backup_name)
+    except Exception:
+        log.exception("maybe_backup")
 
 
 async def main() -> None:
     global _instance
+    try:
+        _parse_hm(WINDOW_START)
+        _parse_hm(WINDOW_END)
+    except (ValueError, IndexError):
+        raise SystemExit("POST_WINDOW_START/END: используйте формат HH:MM") from None
+
     _instance = SingleInstance(DB_PATH.parent / "bot.lock")
     _instance.acquire()
     try:

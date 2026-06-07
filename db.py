@@ -481,6 +481,8 @@ class DB:
         return lines
 
     @staticmethod
-    def fmt_minute(minute: int) -> str:
+    def fmt_minute(minute: int | None) -> str:
+        if minute is None:
+            return "—"
         h, m = divmod(minute, 60)
         return f"{h:02d}:{m:02d}"
