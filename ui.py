@@ -385,17 +385,19 @@ def add_channel_manual_prompt() -> str:
     )
 
 
-def channels_list(channels: list[tuple[int, str, str | None, str]], page: int, total: int) -> str:
+def channels_list(
+    channels: list[tuple[int, str, str | None, str]], page_num: int, total: int
+) -> str:
     if not total:
         body = "Список пуст.\nДобавьте бота админом или используйте ручное добавление."
     else:
-        start = page * CHANNELS_PER_PAGE
+        start = page_num * CHANNELS_PER_PAGE
         lines = []
         for _, title, username, sched in channels[start : start + CHANNELS_PER_PAGE]:
             name = f"@{username}" if username else title
             lines.append(f"  • {name} — {sched}")
         body = (
-            f"Всего: <b>{total}</b>  ·  стр. <b>{page + 1}</b>\n\n"
+            f"Всего: <b>{total}</b>  ·  стр. <b>{page_num + 1}</b>\n\n"
             + "\n".join(lines)
             + "\n\nВыберите канал для управления."
         )
