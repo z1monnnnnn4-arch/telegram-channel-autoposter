@@ -796,6 +796,26 @@ async def cb_schedule_one(q: CallbackQuery) -> None:
         await q.answer("Нет доступа", show_alert=True)
         return
     chat_id = int(q.data.removeprefix(ui.CB_SCHEDULE_ONE_PREFIX))
+    ch = await db.get_channel(chat_id)
+    if not ch:
+        await q.answer("Канал не найден", show_alert=True)
+        return
+    name = channel_label(ch[0], ch[1])
+    sched_time = db.fmt_minute(ch[2])
+    await q.answer()
+    await q.message.edit_text(
+        ui.schedule_one_confirm(name, sched_time),
+        reply_markup=ui.inline_confirm_schedule_one(chat_id),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+@router.callback_query(F.data.startswith(ui.CB_SCHEDULE_ONE_YES_PREFIX))
+async def cb_schedule_one_yes(q: CallbackQuery) -> None:
+    if not is_admin(q.from_user.id):
+        await q.answer("Нет доступа", show_alert=True)
+        return
+    chat_id = int(q.data.removeprefix(ui.CB_SCHEDULE_ONE_YES_PREFIX))
     if await db.regenerate_channel(chat_id):
         ch = await db.get_channel(chat_id)
         time_s = db.fmt_minute(ch[2]) if ch else "—"
@@ -851,6 +871,20 @@ async def cb_clear(q: CallbackQuery) -> None:
 
 @router.callback_query(F.data == ui.CB_CLEAR_INACTIVE)
 async def cb_clear_inactive(q: CallbackQuery) -> None:
+    if not is_admin(q.from_user.id):
+        await q.answer("Нет доступа", show_alert=True)
+        return
+    count = await db.count_inactive()
+    await q.answer()
+    await q.message.edit_text(
+        ui.clear_inactive_confirm(count),
+        reply_markup=ui.inline_confirm_clear_inactive(),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+@router.callback_query(F.data == ui.CB_CLEAR_INACTIVE_YES)
+async def cb_clear_inactive_yes(q: CallbackQuery) -> None:
     if not is_admin(q.from_user.id):
         await q.answer("Нет доступа", show_alert=True)
         return
@@ -991,6 +1025,19 @@ async def cb_logs_clear(q: CallbackQuery) -> None:
     if not is_admin(q.from_user.id):
         await q.answer("Нет доступа", show_alert=True)
         return
+    await q.answer()
+    await q.message.edit_text(
+        ui.logs_clear_confirm(),
+        reply_markup=ui.inline_confirm_logs_clear(),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+@router.callback_query(F.data == ui.CB_LOGS_CLEAR_YES)
+async def cb_logs_clear_yes(q: CallbackQuery) -> None:
+    if not is_admin(q.from_user.id):
+        await q.answer("Нет доступа", show_alert=True)
+        return
     await db.clear_last_error()
     await q.answer("Сброшено")
     await show_logs(q)
@@ -1085,6 +1132,19 @@ async def cb_update_install(q: CallbackQuery) -> None:
     if not is_owner(q.from_user.id):
         await q.answer("Только владелец из .env", show_alert=True)
         return
+    await q.answer()
+    await edit_screen(
+        q,
+        ui.update_install_confirm(),
+        ui.inline_confirm_update_install(),
+    )
+
+
+@router.callback_query(F.data == ui.CB_UPDATE_INSTALL_YES)
+async def cb_update_install_yes(q: CallbackQuery) -> None:
+    if not is_owner(q.from_user.id):
+        await q.answer("Только владелец из .env", show_alert=True)
+        return
     await q.answer("Устанавливаю…")
     await edit_screen(q, ui.update_installing())
     ok, output = await git_install_update()
@@ -1141,6 +1201,23 @@ async def cb_admin_remove(q: CallbackQuery) -> None:
         await q.answer("Только владелец из .env", show_alert=True)
         return
     uid = int(q.data.removeprefix(ui.CB_ADMIN_REMOVE_PREFIX))
+    if uid in ADMIN_IDS:
+        await q.answer("Нельзя убрать владельца", show_alert=True)
+        return
+    await q.answer()
+    await q.message.edit_text(
+        ui.admin_remove_confirm(uid),
+        reply_markup=ui.inline_confirm_admin_remove(uid),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+@router.callback_query(F.data.startswith(ui.CB_ADMIN_REMOVE_YES_PREFIX))
+async def cb_admin_remove_yes(q: CallbackQuery) -> None:
+    if not is_owner(q.from_user.id):
+        await q.answer("Только владелец из .env", show_alert=True)
+        return
+    uid = int(q.data.removeprefix(ui.CB_ADMIN_REMOVE_YES_PREFIX))
     if uid in ADMIN_IDS:
         await q.answer("Нельзя убрать владельца", show_alert=True)
         return

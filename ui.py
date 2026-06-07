@@ -18,6 +18,7 @@ CB_SEND = "send"
 CB_SEND_YES = "send_yes"
 CB_CLEAR = "clear"
 CB_CLEAR_INACTIVE = "clear_inactive"
+CB_CLEAR_INACTIVE_YES = "clear_inactive_yes"
 CB_CLEAR_ALL = "clear_all"
 CB_CLEAR_YES = "clear_yes"
 CB_HELP = "help"
@@ -32,22 +33,26 @@ CB_RELOAD = "reload"
 CB_RESTART_YES = "restart_yes"
 CB_UPDATE = "update"
 CB_UPDATE_INSTALL = "update_install"
+CB_UPDATE_INSTALL_YES = "update_install_yes"
 CB_UPDATE_RESTART = "update_restart"
 CB_ADMINS = "admins"
 CB_ADMIN_ADD = "admin_add"
 CB_LOGS = "logs"
 CB_LOGS_CLEAR = "logs_clear"
+CB_LOGS_CLEAR_YES = "logs_clear_yes"
 CB_REMOVE_PREFIX = "rm:"
 CB_CHANNEL_PREFIX = "ch:"
 CB_CHANNELS_PAGE_PREFIX = "chpg:"
 CB_SEND_ONE_PREFIX = "snd:"
 CB_SEND_ONE_YES_PREFIX = "sndy:"
 CB_SCHEDULE_ONE_PREFIX = "sch:"
+CB_SCHEDULE_ONE_YES_PREFIX = "schy:"
 CB_REMOVE_YES_PREFIX = "rmy:"
 CB_ADMIN_REMOVE_PREFIX = "admrm:"
+CB_ADMIN_REMOVE_YES_PREFIX = "admry:"
 CB_NOOP = "noop"
 
-BOT_VERSION = "1.3"
+BOT_VERSION = "1.4"
 CHANNELS_PER_PAGE = 12
 
 
@@ -128,44 +133,49 @@ def inline_wait_input(back: str = CB_MENU) -> InlineKeyboardMarkup:
     return inline_back(back)
 
 
-def inline_confirm_send() -> InlineKeyboardMarkup:
+def inline_confirm(
+    yes_cb: str,
+    no_cb: str,
+    *,
+    yes_label: str = "✅ Да",
+) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [_section("ПОДТВЕРЖДЕНИЕ")],
-            [InlineKeyboardButton(text="✅ Да, отправить", callback_data=CB_SEND_YES)],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=CB_MENU)],
+            [
+                InlineKeyboardButton(text=yes_label, callback_data=yes_cb),
+                InlineKeyboardButton(text="❌ Нет", callback_data=no_cb),
+            ],
         ]
     )
+
+
+def inline_confirm_send() -> InlineKeyboardMarkup:
+    return inline_confirm(CB_SEND_YES, CB_MENU, yes_label="✅ Да, отправить")
 
 
 def inline_confirm_regen() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [_section("ПОДТВЕРЖДЕНИЕ")],
-            [InlineKeyboardButton(text="✅ Да, перегенерировать", callback_data=CB_REGEN_YES)],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=CB_MENU)],
-        ]
-    )
+    return inline_confirm(CB_REGEN_YES, CB_MENU, yes_label="✅ Да, перегенерировать")
 
 
 def inline_confirm_restart() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [_section("ПОДТВЕРЖДЕНИЕ")],
-            [InlineKeyboardButton(text="✅ Перезапустить процесс", callback_data=CB_RESTART_YES)],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=CB_MENU)],
-        ]
-    )
+    return inline_confirm(CB_RESTART_YES, CB_MENU, yes_label="✅ Да, перезапустить")
 
 
 def inline_confirm_clear_all() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [_section("ПОДТВЕРЖДЕНИЕ")],
-            [InlineKeyboardButton(text="✅ Удалить все", callback_data=CB_CLEAR_YES)],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=CB_CLEAR)],
-        ]
-    )
+    return inline_confirm(CB_CLEAR_YES, CB_CLEAR, yes_label="✅ Да, удалить все")
+
+
+def inline_confirm_clear_inactive() -> InlineKeyboardMarkup:
+    return inline_confirm(CB_CLEAR_INACTIVE_YES, CB_CLEAR, yes_label="✅ Да, удалить")
+
+
+def inline_confirm_logs_clear() -> InlineKeyboardMarkup:
+    return inline_confirm(CB_LOGS_CLEAR_YES, CB_LOGS, yes_label="✅ Да, сбросить")
+
+
+def inline_confirm_update_install() -> InlineKeyboardMarkup:
+    return inline_confirm(CB_UPDATE_INSTALL_YES, CB_UPDATE, yes_label="✅ Да, установить")
 
 
 def inline_add_channel() -> InlineKeyboardMarkup:
@@ -217,22 +227,34 @@ def inline_channel_detail(chat_id: int) -> InlineKeyboardMarkup:
 
 
 def inline_confirm_send_one(chat_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [_section("ПОДТВЕРЖДЕНИЕ")],
-            [InlineKeyboardButton(text="✅ Да, отправить", callback_data=f"{CB_SEND_ONE_YES_PREFIX}{chat_id}")],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"{CB_CHANNEL_PREFIX}{chat_id}")],
-        ]
+    return inline_confirm(
+        f"{CB_SEND_ONE_YES_PREFIX}{chat_id}",
+        f"{CB_CHANNEL_PREFIX}{chat_id}",
+        yes_label="✅ Да, отправить",
     )
 
 
 def inline_confirm_remove(chat_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [_section("ПОДТВЕРЖДЕНИЕ")],
-            [InlineKeyboardButton(text="✅ Удалить из базы", callback_data=f"{CB_REMOVE_YES_PREFIX}{chat_id}")],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"{CB_CHANNEL_PREFIX}{chat_id}")],
-        ]
+    return inline_confirm(
+        f"{CB_REMOVE_YES_PREFIX}{chat_id}",
+        f"{CB_CHANNEL_PREFIX}{chat_id}",
+        yes_label="✅ Да, удалить",
+    )
+
+
+def inline_confirm_schedule_one(chat_id: int) -> InlineKeyboardMarkup:
+    return inline_confirm(
+        f"{CB_SCHEDULE_ONE_YES_PREFIX}{chat_id}",
+        f"{CB_CHANNEL_PREFIX}{chat_id}",
+        yes_label="✅ Да, назначить",
+    )
+
+
+def inline_confirm_admin_remove(uid: int) -> InlineKeyboardMarkup:
+    return inline_confirm(
+        f"{CB_ADMIN_REMOVE_YES_PREFIX}{uid}",
+        CB_ADMINS,
+        yes_label="✅ Да, убрать",
     )
 
 
@@ -615,6 +637,52 @@ def remove_confirm(name: str) -> str:
         "КАНАЛЫ",
         f"Удалить <b>{name}</b> из базы?\n"
         "Из Telegram канал не удалится.",
+    )
+
+
+def schedule_one_confirm(name: str, sched_time: str) -> str:
+    return page(
+        "🔄",
+        "Новое время",
+        "КАНАЛЫ",
+        f"Назначить новое случайное время для <b>{name}</b>?\n"
+        f"Сейчас: <b>{sched_time}</b>",
+    )
+
+
+def clear_inactive_confirm(count: int) -> str:
+    return page(
+        "🧹",
+        "Удалить неактивные",
+        "КАНАЛЫ",
+        f"Удалить из базы <b>{count}</b> неактивных каналов?",
+    )
+
+
+def logs_clear_confirm() -> str:
+    return page(
+        "🧹",
+        "Сброс ошибки",
+        "СИСТЕМА",
+        "Сбросить последнюю ошибку в логах?",
+    )
+
+
+def admin_remove_confirm(uid: int) -> str:
+    return page(
+        "❌",
+        "Убрать админа",
+        "СИСТЕМА",
+        f"Убрать доступ у <code>{uid}</code>?",
+    )
+
+
+def update_install_confirm() -> str:
+    return page(
+        "📥",
+        "Установка обновления",
+        "СИСТЕМА",
+        "Установить обновление с GitHub и перезапустить бота?",
     )
 
 
