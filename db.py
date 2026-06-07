@@ -362,21 +362,20 @@ class DB:
             await db.commit()
 
     async def regenerate_day(self) -> int:
-        day_s = today_iso()
         count = 0
         async with aiosqlite.connect(self.path) as db:
             rows = await db.execute_fetchall(
                 "SELECT chat_id FROM channels WHERE active=1"
             )
             for (chat_id,) in rows:
-                minute = random.randint(self.win_start, self.win_end)
+                sched_date, minute = self._new_schedule()
                 await db.execute(
                     """
                     UPDATE channels
                     SET schedule_date=?, schedule_minute=?, last_post_date=NULL, partial_post_date=NULL
                     WHERE chat_id=? AND active=1
                     """,
-                    (day_s, minute, chat_id),
+                    (sched_date, minute, chat_id),
                 )
                 count += 1
             await db.commit()

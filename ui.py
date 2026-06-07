@@ -54,7 +54,7 @@ CB_ADMIN_REMOVE_PREFIX = "admrm:"
 CB_ADMIN_REMOVE_YES_PREFIX = "admry:"
 CB_NOOP = "noop"
 
-BOT_VERSION = "2.0.1"
+BOT_VERSION = "2.0.2"
 CHANNELS_PER_PAGE = 12
 
 
@@ -630,7 +630,8 @@ def regen_confirm(count: int) -> str:
         "Перегенерация расписания",
         "РАССЫЛКА",
         f"Назначить новое случайное время для <b>{count}</b> каналов?\n"
-        "Сбросит отметку «опубликовано» на сегодня.",
+        "Сбросит отметку «опубликовано» на сегодня.\n"
+        "После 22:00 МСК — время на <b>завтра</b>, не мгновенная отправка.",
     )
 
 
