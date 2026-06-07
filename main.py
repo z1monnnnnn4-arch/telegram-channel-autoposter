@@ -98,7 +98,7 @@ async def git_pull() -> tuple[bool, str]:
             return False, "Git-репозиторий не найден"
         try:
             r = subprocess.run(
-                ["git", "pull", "--ff-only"],
+                ["git", "pull", "--ff-only", "origin", "main"],
                 cwd=ROOT,
                 capture_output=True,
                 text=True,

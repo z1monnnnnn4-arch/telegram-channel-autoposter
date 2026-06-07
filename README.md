@@ -167,16 +167,42 @@ fpuniversal log
 
 Оба бота **не мешают** друг другу: разные токены, папки и systemd-сервисы.
 
-### Обновление кода (только если ставили через git clone)
+### Привязка zip-установки к GitHub (один раз)
+
+```bash
+systemctl stop tg-bot
+
+cd /root/tg_bot
+git init
+git remote add origin https://github.com/z1monnnnnn4-arch/telegram-channel-autoposter.git
+git fetch origin
+git checkout -b main
+git reset --hard origin/main
+git branch --set-upstream-to=origin/main main
+
+.venv/bin/pip install -r requirements.txt
+systemctl start tg-bot
+```
+
+`.env` и `data/` не удалятся.
+
+### Обновление кода
 
 ```bash
 cd /root/tg_bot
-git pull
+git pull origin main
 .venv/bin/pip install -r requirements.txt
 systemctl restart tg-bot
 ```
 
-Или кнопка **СИСТЕМА → ⬆️ Обновление** в боте (git pull + перезапуск).
+Или кнопка **СИСТЕМА → ⬆️ Обновление → Перезапустить** в боте.
+
+Если ошибка *no tracking information* — на сервере один раз:
+
+```bash
+cd /root/tg_bot
+git branch --set-upstream-to=origin/main main
+```
 
 ### Если пишет «Бот уже запущен (PID …)»
 
