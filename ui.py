@@ -1,3 +1,5 @@
+import html
+
 from aiogram.types import (
     BotCommand,
     InlineKeyboardButton,
@@ -29,6 +31,7 @@ CB_SYS = "sys"
 CB_RELOAD = "reload"
 CB_RESTART_YES = "restart_yes"
 CB_UPDATE = "update"
+CB_UPDATE_INSTALL = "update_install"
 CB_UPDATE_RESTART = "update_restart"
 CB_ADMINS = "admins"
 CB_ADMIN_ADD = "admin_add"
@@ -44,7 +47,7 @@ CB_REMOVE_YES_PREFIX = "rmy:"
 CB_ADMIN_REMOVE_PREFIX = "admrm:"
 CB_NOOP = "noop"
 
-BOT_VERSION = "1.2"
+BOT_VERSION = "1.3"
 CHANNELS_PER_PAGE = 12
 
 
@@ -256,6 +259,15 @@ def inline_admins(extra_ids: list[int]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def inline_update_install() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📥 Установить", callback_data=CB_UPDATE_INSTALL)],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=CB_MENU)],
+        ]
+    )
+
+
 def inline_after_update() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -462,10 +474,59 @@ def reload_done() -> str:
     return page("♻️", "Перезапуск", "СИСТЕМА", "Бот перезапускается…")
 
 
-def update_result(ok: bool, output: str) -> str:
-    status = "✅ Обновление выполнено" if ok else "❌ Ошибка обновления"
-    hint = "Нажмите «Перезапустить бота», если код изменился." if ok else ""
-    return page("⬆️", "Обновление", "СИСТЕМА", f"{status}\n\n<code>{output}</code>\n\n{hint}")
+def update_latest(local: str, remote: str) -> str:
+    return page(
+        "⬆️",
+        "Обновление",
+        "СИСТЕМА",
+        f"✅ У вас <b>последняя версия</b>\n\n"
+        f"Бот v<b>{BOT_VERSION}</b>\n"
+        f"Коммит: <code>{local}</code>",
+    )
+
+
+def update_available(local: str, remote: str, commit_msg: str) -> str:
+    msg = html.escape(commit_msg) if commit_msg else "—"
+    return page(
+        "⬆️",
+        "Обновление",
+        "СИСТЕМА",
+        f"🆕 Доступна <b>новая версия</b>\n\n"
+        f"Сейчас: <code>{local}</code>\n"
+        f"На GitHub: <code>{remote}</code>\n\n"
+        f"<b>Изменения:</b>\n{msg}",
+    )
+
+
+def update_error(detail: str) -> str:
+    return page(
+        "⬆️",
+        "Обновление",
+        "СИСТЕМА",
+        f"❌ Не удалось проверить обновления\n\n<code>{detail}</code>",
+    )
+
+
+def update_installing() -> str:
+    return page("📥", "Установка", "СИСТЕМА", "Скачиваю обновление с GitHub…")
+
+
+def update_installed(output: str) -> str:
+    return page(
+        "✅",
+        "Установлено",
+        "СИСТЕМА",
+        f"Обновление установлено.\nБот перезапускается…\n\n<code>{output}</code>",
+    )
+
+
+def update_install_fail(output: str) -> str:
+    return page(
+        "❌",
+        "Ошибка установки",
+        "СИСТЕМА",
+        f"<code>{output}</code>",
+    )
 
 
 def admins_page(admin_ids: list[int], owner_ids: set[int], extra_ids: list[int]) -> str:

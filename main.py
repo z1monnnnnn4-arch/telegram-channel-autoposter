@@ -92,24 +92,95 @@ def get_system_load() -> dict[str, str]:
     }
 
 
-async def git_pull() -> tuple[bool, str]:
-    def run() -> tuple[bool, str]:
-        if not (ROOT / ".git").exists():
-            return False, "Git-репозиторий не найден"
-        try:
-            r = subprocess.run(
-                ["git", "pull", "--ff-only", "origin", "main"],
-                cwd=ROOT,
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-        except FileNotFoundError:
-            return False, "git не установлен"
-        out = (r.stdout + r.stderr).strip() or "готово"
-        return r.returncode == 0, out[:800]
+async def _run_in_root(args: list[str]) -> subprocess.CompletedProcess:
+    return await asyncio.to_thread(
+        subprocess.run,
+        args,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
 
-    return await asyncio.to_thread(run)
+
+async def git_check_update() -> dict:
+    if not (ROOT / ".git").exists():
+        return {"ok": False, "error": "Git-репозиторий не найден"}
+
+    try:
+        fetch = await _run_in_root(["git", "fetch", "origin", "main"])
+    except FileNotFoundError:
+        return {"ok": False, "error": "git не установлен"}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "таймаут при проверке GitHub"}
+
+    if fetch.returncode != 0:
+        err = (fetch.stderr + fetch.stdout).strip() or "git fetch failed"
+        return {"ok": False, "error": err[:800]}
+
+    local = await _run_in_root(["git", "rev-parse", "HEAD"])
+    remote = await _run_in_root(["git", "rev-parse", "origin/main"])
+    if local.returncode != 0 or remote.returncode != 0:
+        return {"ok": False, "error": "не удалось сравнить версии"}
+
+    local_hash = local.stdout.strip()
+    remote_hash = remote.stdout.strip()
+    short = await _run_in_root(["git", "rev-parse", "--short", "HEAD"])
+    remote_short = await _run_in_root(["git", "rev-parse", "--short", "origin/main"])
+    local_s = short.stdout.strip() or local_hash[:7]
+    remote_s = remote_short.stdout.strip() or remote_hash[:7]
+
+    if local_hash == remote_hash:
+        return {"ok": True, "status": "latest", "local": local_s, "remote": remote_s}
+
+    log = await _run_in_root(["git", "log", "-1", "--pretty=format:%s", "origin/main"])
+    commit_msg = log.stdout.strip() if log.returncode == 0 else ""
+    return {
+        "ok": True,
+        "status": "available",
+        "local": local_s,
+        "remote": remote_s,
+        "commit_msg": commit_msg,
+    }
+
+
+async def git_pull() -> tuple[bool, str]:
+    try:
+        r = await _run_in_root(["git", "pull", "--ff-only", "origin", "main"])
+    except FileNotFoundError:
+        return False, "git не установлен"
+    except subprocess.TimeoutExpired:
+        return False, "таймаут при git pull"
+    out = (r.stdout + r.stderr).strip() or "готово"
+    return r.returncode == 0, out[:800]
+
+
+async def pip_install_deps() -> tuple[bool, str]:
+    venv_pip = ROOT / ".venv" / "bin" / "pip"
+    if venv_pip.exists():
+        cmd = [str(venv_pip), "install", "-r", "requirements.txt"]
+    else:
+        cmd = [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"]
+    try:
+        r = await _run_in_root(cmd)
+    except FileNotFoundError:
+        return False, "pip не найден"
+    except subprocess.TimeoutExpired:
+        return False, "таймаут при pip install"
+    out = (r.stdout + r.stderr).strip() or "готово"
+    return r.returncode == 0, out[:400]
+
+
+async def git_install_update() -> tuple[bool, str]:
+    ok, out = await git_pull()
+    if not ok:
+        return False, out
+    ok_pip, pip_out = await pip_install_deps()
+    if not ok_pip:
+        return False, f"{out}\n\npip: {pip_out}"
+    if pip_out and "already satisfied" not in pip_out.lower():
+        return True, f"{out}\n\n{pip_out}"
+    return True, out
 
 
 def cancel_wait(user_id: int) -> None:
@@ -983,13 +1054,52 @@ async def cb_update(q: CallbackQuery) -> None:
         await q.answer("Только владелец из .env", show_alert=True)
         return
     await q.answer("Проверяю…")
-    ok, output = await git_pull()
-    markup = ui.inline_after_update() if ok else ui.inline_back()
-    await q.message.edit_text(
-        ui.update_result(ok, html.escape(output)),
-        reply_markup=markup,
-        parse_mode=ParseMode.HTML,
+    info = await git_check_update()
+    if not info.get("ok"):
+        await edit_screen(
+            q,
+            ui.update_error(html.escape(info.get("error", "ошибка"))),
+            ui.inline_back(),
+        )
+        return
+    if info["status"] == "latest":
+        await edit_screen(
+            q,
+            ui.update_latest(info["local"], info["remote"]),
+            ui.inline_back(),
+        )
+        return
+    await edit_screen(
+        q,
+        ui.update_available(
+            info["local"],
+            info["remote"],
+            info.get("commit_msg", ""),
+        ),
+        ui.inline_update_install(),
     )
+
+
+@router.callback_query(F.data == ui.CB_UPDATE_INSTALL)
+async def cb_update_install(q: CallbackQuery) -> None:
+    if not is_owner(q.from_user.id):
+        await q.answer("Только владелец из .env", show_alert=True)
+        return
+    await q.answer("Устанавливаю…")
+    await edit_screen(q, ui.update_installing())
+    ok, output = await git_install_update()
+    if not ok:
+        await edit_screen(
+            q,
+            ui.update_install_fail(html.escape(output)),
+            ui.inline_update_install(),
+        )
+        return
+    cancel_wait(q.from_user.id)
+    await refresh_admins()
+    await db.ensure_today_schedules()
+    await edit_screen(q, ui.update_installed(html.escape(output)))
+    asyncio.create_task(schedule_restart())
 
 
 @router.callback_query(F.data == ui.CB_UPDATE_RESTART)
