@@ -5,8 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=tgbot
-Group=tgbot
+User=root
 WorkingDirectory=/opt/tg_bot
 EnvironmentFile=/opt/tg_bot/.env
 ExecStart=/opt/tg_bot/.venv/bin/python main.py

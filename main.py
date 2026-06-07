@@ -12,13 +12,14 @@ from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ChatMemberStatus, ChatType, ParseMode
 from aiogram.exceptions import (
+    TelegramBadRequest,
     TelegramForbiddenError,
     TelegramNetworkError,
     TelegramRetryAfter,
     TelegramServerError,
 )
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, ChatMemberUpdated, Message
+from aiogram.types import CallbackQuery, ChatMemberUpdated, InputMediaPhoto, Message
 from dotenv import load_dotenv
 
 import ui
@@ -163,6 +164,37 @@ async def send_menu(message: Message, *, edit: bool = False) -> None:
         await message.answer(body, reply_markup=markup, parse_mode=ParseMode.HTML)
 
 
+async def edit_screen(
+    q: CallbackQuery,
+    text: str,
+    reply_markup=None,
+    *,
+    parse_mode: ParseMode = ParseMode.HTML,
+) -> None:
+    msg = q.message
+    if msg.photo or msg.document or msg.video or msg.animation:
+        try:
+            await msg.delete()
+        except TelegramBadRequest:
+            pass
+        await q.bot.send_message(
+            msg.chat.id, text, reply_markup=reply_markup, parse_mode=parse_mode
+        )
+        return
+    try:
+        await msg.edit_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+    except TelegramBadRequest as ex:
+        err = str(ex).lower()
+        if "message is not modified" in err:
+            return
+        if "no text" in err or "can't be edited" in err:
+            await q.bot.send_message(
+                msg.chat.id, text, reply_markup=reply_markup, parse_mode=parse_mode
+            )
+            return
+        raise
+
+
 async def deny(msg: Message) -> None:
     await msg.answer(
         ui.page("🔒", "Нет доступа", "СИСТЕМА", "Этот бот только для администратора."),
@@ -173,8 +205,7 @@ async def deny(msg: Message) -> None:
 async def build_dashboard() -> str:
     s = await db.stats()
     lines = await db.next_posts(5)
-    text = await db.get_setting("post_text")
-    return ui.dashboard(s, lines, WINDOW, text, s["has_photo"])
+    return ui.dashboard(s, lines, WINDOW)
 
 
 async def build_stats() -> str:
@@ -522,10 +553,10 @@ async def cb_menu(q: CallbackQuery) -> None:
         return
     cancel_wait(q.from_user.id)
     await q.answer()
-    await q.message.edit_text(
+    await edit_screen(
+        q,
         await build_dashboard(),
-        reply_markup=ui.inline_menu(),
-        parse_mode=ParseMode.HTML,
+        ui.inline_menu(),
     )
 
 
@@ -796,19 +827,28 @@ async def cb_preview(q: CallbackQuery) -> None:
     text = await db.get_setting("post_text")
     s = await db.stats()
     photo = await db.get_setting("photo_file_id")
+    body = ui.content_preview(text, s["has_photo"])
     await q.answer()
-    await q.message.edit_text(
-        ui.content_preview(text, s["has_photo"]),
-        reply_markup=ui.inline_back(),
-        parse_mode=ParseMode.HTML,
-    )
     if photo:
-        await q.message.answer_photo(
-            photo,
-            caption=ui.page("🖼", "Картинка поста", "КОНТЕНТ", "Так выглядит текущая картинка."),
-            reply_markup=ui.inline_back(),
-            parse_mode=ParseMode.HTML,
-        )
+        if q.message.photo:
+            await q.message.edit_media(
+                InputMediaPhoto(media=photo, caption=body, parse_mode=ParseMode.HTML),
+                reply_markup=ui.inline_back(),
+            )
+        else:
+            try:
+                await q.message.delete()
+            except TelegramBadRequest:
+                pass
+            await q.bot.send_photo(
+                q.message.chat.id,
+                photo,
+                caption=body,
+                reply_markup=ui.inline_back(),
+                parse_mode=ParseMode.HTML,
+            )
+    else:
+        await edit_screen(q, body, ui.inline_back())
 
 
 @router.callback_query(F.data == ui.CB_REGEN)

@@ -265,22 +265,27 @@ def inline_after_update() -> InlineKeyboardMarkup:
     )
 
 
-def _ok(ok: bool) -> str:
-    return "✅" if ok else "❌"
+def content_preview(text: str | None, has_photo: bool) -> str:
+    if not text and not has_photo:
+        body = "Контент ещё не задан."
+    elif text:
+        preview = text[:400] + ("…" if len(text) > 400 else "")
+        body = preview
+        if not has_photo:
+            body += "\n\n<i>Картинка не задана.</i>"
+    else:
+        body = "Текст не задан."
+        if has_photo:
+            body += "\n\n<i>Картинка — ниже.</i>"
+    return page("👁", "Просмотр контента", "КОНТЕНТ", body)
 
 
 def dashboard(
     stats: dict,
     next_lines: list[str],
     window: str,
-    text_preview: str | None,
-    has_photo: bool,
 ) -> str:
     sched = "\n".join(f"  • {line}" for line in next_lines) if next_lines else "  • нет"
-    preview = ""
-    if text_preview:
-        short = text_preview[:60] + ("…" if len(text_preview) > 60 else "")
-        preview = f"\n<i>{short}</i>"
 
     return (
         f"🏠 <b>Автопостер v{BOT_VERSION}</b>\n"
@@ -294,11 +299,7 @@ def dashboard(
             if stats.get("partial_today")
             else ""
         )
-        + "\n\n"
-        f"{_ok(stats['has_text'])} Текст поста    "
-        f"{_ok(has_photo)} Картинка"
-        f"{preview}\n\n"
-        f"🕐 Окно: <b>{window}</b>  ·  📤 <b>фото → текст</b>\n\n"
+        + f"\n\n🕐 Окно: <b>{window}</b>  ·  📤 <b>фото → текст</b>\n\n"
         f"<b>Ближайшие посты:</b>\n{sched}"
     )
 
@@ -318,27 +319,10 @@ def stats_page(stats: dict, next_lines: list[str], inactive: int, window: str) -
             else ""
         )
         + f"💤 Неактивных в базе: <b>{inactive}</b>\n\n"
-        f"{_ok(stats['has_text'])} Текст поста\n"
-        f"{_ok(stats['has_photo'])} Картинка\n\n"
         f"🕐 Окно публикаций: <b>{window}</b>\n"
         f"📤 Порядок: <b>фото → текст</b>\n\n"
         f"<b>Ближайшие посты:</b>\n{sched}",
     )
-
-
-def content_preview(text: str | None, has_photo: bool) -> str:
-    if not text and not has_photo:
-        body = "Контент ещё не задан.\nЗадайте текст и фото в разделе «КОНТЕНТ»."
-    else:
-        parts = []
-        if text:
-            preview = text[:400] + ("…" if len(text) > 400 else "")
-            parts.append(f"<b>Текст:</b>\n{preview}")
-        else:
-            parts.append("❌ Текст не задан")
-        parts.append("✅ Картинка загружена" if has_photo else "❌ Картинка не задана")
-        body = "\n\n".join(parts)
-    return page("👁", "Просмотр контента", "КОНТЕНТ", body)
 
 
 def add_channel_help() -> str:
