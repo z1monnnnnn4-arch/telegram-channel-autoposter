@@ -6,13 +6,13 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/opt/tg_bot
-EnvironmentFile=/opt/tg_bot/.env
-ExecStart=/opt/tg_bot/.venv/bin/python main.py
+WorkingDirectory=/root/tg_bot
+EnvironmentFile=/root/tg_bot/.env
+ExecStart=/root/tg_bot/.venv/bin/python main.py
 Restart=always
 RestartSec=5
 
-# Один процесс — дубли блокируются bot.lock в data/
+# Один процесс — дубли блокируются data/bot.lock
 LimitNOFILE=65535
 
 [Install]

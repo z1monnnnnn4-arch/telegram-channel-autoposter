@@ -1,89 +1,254 @@
 # Telegram channel autoposter (Bot API)
 
-Бот-админ в каналах. Сам подхватывает каналы при выдаче прав.
+Бот `@z1monPost_bot` — админ в каналах, раз в день постит **фото → текст** в случайное время (08:00–22:00).
+
+Репозиторий: https://github.com/z1monnnnnn4-arch/telegram-channel-autoposter
+
+---
 
 ## Логика
 
-- Каждый день **новое случайное время** (08:00–22:00) на канал
-- В это время: **картинка → пауза 1.5 сек → текст** (два сообщения)
-- Один текст и одно фото на все каналы (задаёте в боте)
+- Каждый день **новое случайное время** на канал (окно задаётся в `.env`)
+- Порядок: **картинка → пауза 1.5 сек → текст**
+- Один текст и одно фото на **все** каналы (задаёте в боте)
+- Бот сам подхватывает каналы, когда его добавляют админом
+- Сняли с админов → канал **деактивируется** в базе (не удаляется). Удалить: **КАНАЛЫ → Очистка → Неактивные**
 
-## Запуск
+---
+
+## Файлы на сервере
+
+| Путь | Что там |
+|------|---------|
+| `/root/tg_bot/` | код бота |
+| `/root/tg_bot/.env` | секреты (не в git!) |
+| `/root/tg_bot/data/bot.db` | база каналов и расписания |
+| `/root/tg_bot/data/backups/` | ежедневные бэкапы БД (14 дней) |
+| `/root/tg_bot/data/bot.lock` | lock-файл (второй процесс не стартует) |
+| `/etc/systemd/system/tg-bot.service` | автозапуск |
+
+FunPay и другие боты — **в других папках** (например `/root/funpayuniversal`). Не смешивать.
+
+---
+
+## Настройка `.env`
 
 ```bash
+cp .env.example .env
+nano .env
+```
+
+```env
+BOT_TOKEN=123456:ABC...          # от @BotFather
+ADMIN_IDS=123456789              # ваш Telegram id (несколько через запятую)
+
+POST_WINDOW_START=08:00          # окно случайного времени поста
+POST_WINDOW_END=22:00
+CHANNEL_DELAY_SEC=4              # пауза между каналами при массовой отправке
+DB_PATH=data/bot.db
+```
+
+Узнать свой id: @userinfobot
+
+---
+
+## Установка на Ubuntu (VPS)
+
+Подключиться по SSH и выполнить **по порядку**.
+
+### 1. Скачать код
+
+**Вариант A — git (удобно для обновлений):**
+
+```bash
+cd /root
+git clone https://github.com/z1monnnnnn4-arch/telegram-channel-autoposter.git tg_bot
+cd tg_bot
+```
+
+**Вариант B — zip с GitHub:**
+
+Залить архив в `/root`, переименовать:
+
+```bash
+cd /root
+mv telegram-channel-autoposter-main tg_bot
+cd tg_bot
+```
+
+> С zip обновление через `git pull` не работает — только повторная заливка или переход на git clone.
+
+### 2. Python и зависимости
+
+```bash
+apt update
+apt install -y python3 python3-venv python3-pip git
+
+cd /root/tg_bot
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
+### 3. Конфиг
+
+```bash
+cp .env.example .env
+nano .env
+```
+
+### 4. Пробный запуск
+
+```bash
+.venv/bin/python main.py
+```
+
+Должно быть: `started v1.2` и `Run polling for bot @z1monPost_bot`.
+
+Остановка: **Ctrl+C**.
+
+### 5. Автозапуск (systemd)
+
+```bash
+cat > /etc/systemd/system/tg-bot.service << 'EOF'
+[Unit]
+Description=Telegram channel autoposter
+After=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/tg_bot
+EnvironmentFile=/root/tg_bot/.env
+ExecStart=/root/tg_bot/.venv/bin/python main.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now tg-bot
+systemctl status tg-bot
+```
+
+Или из репозитория (если путь `/root/tg_bot`):
+
+```bash
+cp deploy/tg-bot.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now tg-bot
+```
+
+---
+
+## Команды на сервере
+
+### Автопостер (tg-bot)
+
+```bash
+systemctl status tg-bot       # статус
+systemctl start tg-bot        # запуск
+systemctl stop tg-bot         # остановка
+systemctl restart tg-bot      # перезапуск
+journalctl -u tg-bot -f       # логи в реальном времени
+journalctl -u tg-bot -n 100   # последние 100 строк логов
+```
+
+### FunPay (если установлен рядом)
+
+```bash
+fpuniversal status
+fpuniversal start
+fpuniversal stop
+fpuniversal restart
+fpuniversal log
+```
+
+Оба бота **не мешают** друг другу: разные токены, папки и systemd-сервисы.
+
+### Обновление кода (только если ставили через git clone)
+
+```bash
+cd /root/tg_bot
+git pull
+.venv/bin/pip install -r requirements.txt
+systemctl restart tg-bot
+```
+
+Или кнопка **СИСТЕМА → ⬆️ Обновление** в боте (git pull + перезапуск).
+
+### Если пишет «Бот уже запущен (PID …)»
+
+```bash
+systemctl stop tg-bot
+rm -f /root/tg_bot/data/bot.lock
+systemctl start tg-bot
+```
+
+---
+
+## Запуск на Windows (локально)
+
+```powershell
+cd D:\tg_bot
 pip install -r requirements.txt
 copy .env.example .env
-# BOT_TOKEN от @BotFather, ADMIN_IDS — ваш Telegram id
+# заполнить .env
 python main.py
 ```
 
-## Управление
+Остановка: **Ctrl+C**. Если не помогает:
 
-Только команда `/start` — дальше всё через **кнопки меню**:
+```powershell
+Get-Process python* | Stop-Process -Force
+Remove-Item data\bot.lock -Force -ErrorAction SilentlyContinue
+```
+
+---
+
+## Управление в Telegram
+
+Только `/start` — дальше **кнопки меню**:
 
 | Раздел | Возможности |
 |--------|-------------|
-| Контент | текст, фото, просмотр |
-| Рассылка | статистика, отправить всем, перегенерировать расписание |
-| Каналы | список, ручное добавление, отправка в один канал, удаление, очистка |
-| Система | нагрузка CPU/RAM, логи, админы, перезагрузка, git pull |
-| Справка | подсказки |
+| **КОНТЕНТ** | текст, фото, просмотр |
+| **РАССЫЛКА** | статистика, отправить всем, перегенерировать расписание |
+| **КАНАЛЫ** | список, ручное добавление, пост в один канал, удаление, очистка |
+| **СИСТЕМА** | нагрузка, логи, админы, перезагрузка, git pull |
+| **СПРАВКА** | подсказки |
 
-## Подключение канала
+### Подключение канала
 
-1. Создайте канал
-2. Добавьте бота **админом** с правом **«Управление публикациями»**
-3. Канал подхватится автоматически
-4. Если бот уже был админом — **➕ Подключить → Добавить вручную**
+1. Создайте канал (приватный или публичный)
+2. Добавьте `@z1monPost_bot` **админом** с правом **«Управление публикациями»**
+3. Канал подхватится сам
+4. Если бот уже был админом до запуска — **КАНАЛЫ → Подключить → Добавить вручную**
 
-## VPS (рядом с другими ботами)
+---
 
-Автопостер **не мешает** funpay-universal и другим ботам, если:
+## Автоматика
 
-- **другой токен** BotFather (у вас `@z1monPost_bot` — отдельный бот);
-- **отдельная папка** и свой venv (не смешивать с `/root/funpayuniversal`);
-- **отдельный systemd-сервис** (funpay — `fpuniversal`, автопостер — `tg-bot`).
+- Каждую минуту проверяет, кому пора постить
+- **00:05** — новое расписание на день + бэкап БД
+- При падении процесса systemd перезапускает через 5 сек
+- Фото ушло, текст нет → повтор только текста (без второго фото)
 
-Оба бота ходят в Telegram API через long polling — порты открывать не нужно.
+---
 
-### Установка на Ubuntu (пример: `/opt/tg_bot`)
-
-```bash
-sudo apt update
-sudo apt install -y git python3 python3-venv python3-pip
-
-sudo git clone https://github.com/z1monnnnnn4-arch/telegram-channel-autoposter.git /opt/tg_bot
-sudo chown -R $USER:$USER /opt/tg_bot
-cd /opt/tg_bot
-
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-
-cp .env.example .env
-nano .env   # BOT_TOKEN, ADMIN_IDS
-
-# проверка
-.venv/bin/python main.py
-# Ctrl+C после «started v1.2»
-```
-
-### systemd
+## Быстрая шпаргалка после установки
 
 ```bash
-sudo cp deploy/tg-bot.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now tg-bot
-sudo systemctl status tg-bot
+# всё ли работает?
+systemctl status tg-bot
+fpuniversal status
+
+# смотреть логи автопостера
+journalctl -u tg-bot -f
+
+# перезапуск автопостера
+systemctl restart tg-bot
 ```
 
-Логи: `journalctl -u tg-bot -f`
-
-Остановка: `sudo systemctl stop tg-bot`
-
-### Если funpay уже в `/root/funpayuniversal`
-
-Автопостер лучше положить **не туда**, а в `/opt/tg_bot` (или `/root/tg_bot`) — отдельно.
-
-Управление funpay: `fpuniversal status` / `fpuniversal start` — это другой процесс, конфликта нет.
-
-Ежедневно в **00:05** — новое расписание и бэкап БД в `data/backups/` (14 дней).
+В Telegram: `/start` → **КОНТЕНТ** (текст + фото) → добавить бота в каналы.
